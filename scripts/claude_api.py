@@ -179,7 +179,37 @@ Git diff:
             "Claude response was not valid JSON."
         ) from exc
 
-    return review
+    # ---------------------------------------------
+    # Add Claude token usage
+    # ---------------------------------------------
+
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+
+    review["token_usage"] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+    print()
+    print("======================================")
+    print("CLAUDE TOKEN USAGE")
+    print("======================================")
+    print(f"Input tokens : {input_tokens}")
+    print(f"Output tokens: {output_tokens}")
+    print(f"Total tokens : {input_tokens + output_tokens}")
+
+    return review    
+    # except json.JSONDecodeError as exc:
+    #     print("Claude returned invalid JSON:")
+    #     print(text)
+
+    #     raise RuntimeError(
+    #         "Claude response was not valid JSON."
+    #     ) from exc
+
+    # return review
 
 
 def main():
