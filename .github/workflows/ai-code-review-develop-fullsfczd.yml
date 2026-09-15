@@ -1,0 +1,116 @@
+name: AI Code Review - develop-fullsfczd
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+
+  ai-code-review:
+
+    runs-on: self-hosted
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Get PR information
+        id: pr_info
+        run: |
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+          echo "BASE_BRANCH=main" >> "$GITHUB_ENV"
+          echo "HEAD_BRANCH=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_ENV"
+
+      - name: Setup Python virtual environment
+        run: |
+          python3 --version
+          rm -rf .venv
+          python3 -m venv .venv
+          .venv/bin/python --version
+          .venv/bin/python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: |
+          .venv/bin/python -m pip install -r requirements.txt
+
+      - name: Generate PR diff
+        id: generate_diff
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          git diff "origin/$BASE_BRANCH...HEAD" > pr_diff.txt
+
+      - name: Validate Claude configuration
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.REVIEW_DEVELOP_FULLSFCZD_MODEL }}
+        run: |
+          if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
+            echo "ERROR: ANTHROPIC_AUTH_TOKEN is not configured"
+            exit 1
+          fi
+
+      - name: Claude AI Code Review
+        id: claude_review
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.REVIEW_DEVELOP_FULLSFCZD_MODEL }}
+          REVIEW_MODE: ${{ vars.REVIEW_DEVELOP_FULLSFCZD_MODE }}
+          REVIEW_SKILLS: ${{ vars.REVIEW_DEVELOP_FULLSFCZD_SKILLS }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "Instance: develop-fullsfczd"
+          echo "Review mode: $REVIEW_MODE"
+          echo "Review skills: $REVIEW_SKILLS"
+
+          .venv/bin/python \
+            "$GITHUB_WORKSPACE/scripts/ai_code_review.py" \
+            --diff "$GITHUB_WORKSPACE/pr_diff.txt" \
+            --pr-number "$PR_NUMBER" \
+            --repository "$REPOSITORY" \
+            --review-mode "$REVIEW_MODE" \
+            --skills "$REVIEW_SKILLS"
+
+      - name: Validate review result
+        run: |
+          if [ ! -s review_result.json ]; then
+            echo "ERROR: review_result.json is empty"
+            exit 1
+          fi
+          .venv/bin/python -m json.tool review_result.json > /dev/null
+
+      - name: Publish AI Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .venv/bin/python \
+            "$GITHUB_WORKSPACE/scripts/publish_review.py" \
+            --pr-number "$PR_NUMBER" \
+            --review-file review_result.json
+
+      - name: Send reviewer notification
+        env:
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REVIEWER_EMAIL: ${{ vars.REVIEWER_EMAIL }}
+        run: |
+          .venv/bin/python \
+            "$GITHUB_WORKSPACE/scripts/send_review_email.py" \
+            --review-file review_result.json \
+            --pr-number "$PR_NUMBER" \
+            --repository "${{ github.repository }}"
