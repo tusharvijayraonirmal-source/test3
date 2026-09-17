@@ -1,0 +1,96 @@
+name: AI Full Code Review - gfgkjhj
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to review
+        required: true
+        default: main
+        type: string
+      review_type:
+        description: Review type
+        required: true
+        default: full
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  ai-full-code-review:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.branch }}
+      - name: Debug checkout
+        run: "echo \"Full code review started\"\necho \"Repository: $GITHUB_REPOSITORY\"\necho \"Branch: ${{ inputs.branch
+          }}\"\necho \"Commit:\"\ngit rev-parse HEAD"
+      - name: Setup Python virtual environment
+        run: "python3 --version\nrm -rf .venv\npython3 -m venv .venv\n.venv/bin/python -m pip install --upgrade pip"
+      - name: Install dependencies
+        run: "if [ -f requirements.txt ]; then\n  .venv/bin/python -m pip install -r requirements.txt\nelse\n  echo \"requirements.txt
+          not found\"\n  exit 1\nfi"
+      - name: Generate full code input
+        shell: bash
+        run: "echo \"Generating full code input...\"\n\ngit ls-files \\\n  ':(exclude).git/*' \\\n  ':(exclude).venv/*' \\\
+          \n  ':(exclude)__pycache__/*' \\\n  ':(exclude)node_modules/*' \\\n  ':(exclude)full_code.txt' \\\n  ':(exclude)tracked_files.txt'
+          \\\n  > tracked_files.txt\n\n: > full_code.txt\n\nwhile IFS= read -r file; do\n  if [ -f \"$file\" ]; then\n   \
+          \ echo \"\" >> full_code.txt\n    echo \"======================================\" >> full_code.txt\n    echo \"\
+          FILE: $file\" >> full_code.txt\n    echo \"======================================\" >> full_code.txt\n    cat \"\
+          $file\" >> full_code.txt\n  fi\ndone < tracked_files.txt\n\necho 'Tracked files:'\nwc -l tracked_files.txt\n\necho
+          'Full code lines:'\nwc -l full_code.txt\n\nif [ ! -s full_code.txt ]; then\n  echo \"ERROR: full_code.txt is empty\"\
+          \n  exit 1\nfi"
+      - name: Validate Claude configuration
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+        run: "if [ -z \"$ANTHROPIC_AUTH_TOKEN\" ]; then\n  echo \"ERROR: ANTHROPIC_AUTH_TOKEN is missing\"\n  exit 1\nfi\n\
+          \nif [ -z \"$ANTHROPIC_BASE_URL\" ]; then\n  echo \"ERROR: ANTHROPIC_BASE_URL is missing\"\n  exit 1\nfi\n\nif [
+          -z \"$ANTHROPIC_MODEL\" ]; then\n  echo \"ERROR: ANTHROPIC_MODEL is missing\"\n  exit 1\nfi\n\necho \"Claude configuration
+          is valid\""
+      - name: Run full AI code review
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          REVIEW_MODE: FULL_CODEBASE
+          REVIEW_SKILLS: code-review,security-review,performance-review
+          CLAUDE_MODEL: claude-sonnet-5
+          REPOSITORY: ${{ github.repository }}
+          REVIEW_BRANCH: ${{ inputs.branch }}
+        run: "echo \"Starting full AI code review\"\necho \"Review mode: $REVIEW_MODE\"\necho \"Review branch: $REVIEW_BRANCH\"\
+          \necho \"Claude model: $CLAUDE_MODEL\"\n\n.venv/bin/python \\\n  \"$GITHUB_WORKSPACE/scripts/ai_code_review.py\"\
+          \ \\\n  --diff \"$GITHUB_WORKSPACE/full_code.txt\" \\\n  --pr-number \"0\" \\\n  --repository \"$REPOSITORY\" \\\
+          \n  --review-mode \"$REVIEW_MODE\" \\\n  --skills \"$REVIEW_SKILLS\""
+      - name: Validate review result
+        run: "if [ ! -s review_result.json ]; then\n  echo \"ERROR: review_result.json is missing or empty\"\n  exit 1\nfi\n\
+          \n.venv/bin/python -m json.tool review_result.json > /dev/null\necho \"Review result is valid\""
+      - name: Upload full review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-code-review-report
+          path: "review_result.json\nfull_code.txt"
+          if-no-files-found: warn
+      - name: Send reviewer notification
+        if: always()
+        env:
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REVIEWER_EMAIL: ${{ vars.REVIEWER_EMAIL }}
+        run: "if [ ! -s review_result.json ]; then\n  echo \"No review result found; skipping email\"\n  exit 0\nfi\n\n.venv/bin/python
+          \\\n  \"$GITHUB_WORKSPACE/scripts/send_review_email.py\" \\\n  --review-file review_result.json \\\n  --pr-number
+          \"0\" \\\n  --repository \"${{ github.repository }}\""
+      - name: Notify backend
+        if: always()
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
+        run: "if [ -z \"$BACKEND_URL\" ]; then\n  echo \"BACKEND_URL is not configured\"\n  exit 0\nfi\n\ncurl -X POST \\\n\
+          \  \"$BACKEND_URL/api/ephemeral-runner/complete\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Authorization:
+          Bearer $INTERNAL_API_TOKEN\" \\\n  -d '{}' \\\n  --max-time 30 || true"
