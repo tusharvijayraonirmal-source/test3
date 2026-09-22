@@ -5,3 +5,4 @@ pytest
 anthropic
 pydantic
 python-dotenv
+json-repair
