@@ -1,0 +1,167 @@
+name: "AI PR Code Review - cxx"
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-pr-code-review:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Get PR information
+        shell: bash
+        run: |
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> "$GITHUB_ENV"
+          echo "BASE_BRANCH=main" >> "$GITHUB_ENV"
+          echo "HEAD_BRANCH=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_ENV"
+
+      - name: Setup Python virtual environment
+        shell: bash
+        run: |
+          set -e
+
+          python3 -m venv .venv
+
+          .venv/bin/python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f requirements.txt ]; then
+            echo "ERROR: requirements.txt not found"
+            exit 1
+          fi
+
+          .venv/bin/python -m pip install -r requirements.txt
+
+      - name: Generate PR diff
+        shell: bash
+        run: |
+          set -e
+
+          git fetch origin "$BASE_BRANCH"
+
+          git diff             "origin/$BASE_BRANCH...HEAD"             > pr_diff.txt
+
+          if [ ! -s pr_diff.txt ]; then
+            echo "No changes found in pull request"
+            exit 0
+          fi
+
+          echo "PR diff generated"
+          wc -l pr_diff.txt
+
+      - name: Validate Claude configuration
+        shell: bash
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+        run: |
+          set -e
+
+          if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
+            echo "ERROR: ANTHROPIC_AUTH_TOKEN is missing"
+            exit 1
+          fi
+
+          if [ -z "$ANTHROPIC_BASE_URL" ]; then
+            echo "ERROR: ANTHROPIC_BASE_URL is missing"
+            exit 1
+          fi
+
+          if [ -z "$ANTHROPIC_MODEL" ]; then
+            echo "ERROR: ANTHROPIC_MODEL is missing"
+            exit 1
+          fi
+
+          echo "Claude configuration is valid"
+          echo "Claude base URL: $ANTHROPIC_BASE_URL"
+          echo "Claude model: $ANTHROPIC_MODEL"
+
+      - name: Run PR AI code review
+        shell: bash
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          REVIEW_MODE: PR
+          REVIEW_SKILLS: "code-review,security-review"
+          CLAUDE_MODEL: "claude-sonnet-5"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          REVIEW_BRANCH: main
+        run: |
+          set -e
+
+          echo "Starting PR AI code review"
+          echo "Repository: $REPOSITORY"
+          echo "PR number: $PR_NUMBER"
+          echo "Review mode: $REVIEW_MODE"
+          echo "Base branch: $REVIEW_BRANCH"
+          echo "Claude model: $CLAUDE_MODEL"
+
+          .venv/bin/python             "$GITHUB_WORKSPACE/scripts/ai_code_review.py"             --diff "$GITHUB_WORKSPACE/pr_diff.txt"             --pr-number "$PR_NUMBER"             --repository "$REPOSITORY"             --review-mode "$REVIEW_MODE"             --skills "$REVIEW_SKILLS"             --repository-context "$REVIEW_BRANCH"
+
+      - name: Validate review result
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -s review_result.json ]; then
+            echo "ERROR: review_result.json is empty"
+            exit 1
+          fi
+
+          .venv/bin/python             -m json.tool             review_result.json             > /dev/null
+
+          echo "Review result is valid"
+
+      - name: Publish AI Review
+        if: ${{ always() }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -s review_result.json ]; then
+            echo "No review result found"
+            exit 0
+          fi
+
+          .venv/bin/python             "$GITHUB_WORKSPACE/scripts/publish_review.py"             --pr-number "$PR_NUMBER"             --review-file review_result.json
+
+      - name: Send reviewer notification
+        if: ${{ always() && vars.REVIEWER_EMAIL != '' }}
+        shell: bash
+        env:
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REVIEWER_EMAIL: ${{ vars.REVIEWER_EMAIL }}
+        run: |
+          if [ ! -s review_result.json ]; then
+            echo "No review result found; skipping email"
+            exit 0
+          fi
+
+          .venv/bin/python             "$GITHUB_WORKSPACE/scripts/send_review_email.py"             --review-file review_result.json             --pr-number "$PR_NUMBER"             --repository "$REPOSITORY"
