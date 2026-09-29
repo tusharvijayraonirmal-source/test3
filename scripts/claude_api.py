@@ -23,8 +23,6 @@ MODEL = (
 
 api_key = (
     os.getenv("ANTHROPIC_AUTH_TOKEN", "").strip()
-    or os.getenv("ANTHROPIC_API_KEY", "").strip()
-    or os.getenv("ANTHROPIC_TOKEN", "").strip()
 )
 
 base_url = (
@@ -55,11 +53,13 @@ if not MODEL:
 
 
 logger.info(
-    "Claude configuration: model=%s base_url=%s",
+    "Claude config: model=%s base_url=%s token_present=%s token_length=%s token_prefix=%s",
     MODEL,
     base_url,
+    bool(api_key),
+    len(api_key),
+    api_key[:10] + "..." if api_key else "NONE",
 )
-
 
 # ============================================================
 # Claude client
@@ -68,7 +68,8 @@ logger.info(
 client = anthropic.Anthropic(
     api_key=api_key,
     base_url=base_url.rstrip("/"),
-)
+) 
+
 
 # # Build client kwargs conditionally to avoid
 # # passing empty values to newer SDK versions.
