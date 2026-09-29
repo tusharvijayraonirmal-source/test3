@@ -8,12 +8,12 @@ import urllib.request
 def comment(pr_number: str, body: str) -> None:
     """Publish the AI review as a GitHub PR comment."""
 
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    token = os.environ.get("GITHUB_TOKEN")
     repository = os.environ.get("GITHUB_REPOSITORY")
 
     if not token:
         raise RuntimeError(
-            "GITHUB_TOKEN or GH_TOKEN "
+            "GITHUB_TOKEN "
             "environment variable is not set"
         )
 
