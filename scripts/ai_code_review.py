@@ -361,7 +361,7 @@ logger = logging.getLogger(__name__)
 
 def read_text_file(file_path: str) -> str:
     """
-    Read a UTF-8 text file.
+    Read a text file, trying UTF-8 first then falling back to Latin-1.
     """
     path = Path(file_path)
 
@@ -370,7 +370,10 @@ def read_text_file(file_path: str) -> str:
             f"File not found: {file_path}"
         )
 
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = path.read_text(encoding="latin-1")
 
     if not content.strip():
         raise ValueError(
