@@ -1,19 +1,22 @@
 import argparse
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 
 def comment(pr_number: str, body: str) -> None:
     """Publish the AI review as a GitHub PR comment."""
 
-    token = os.environ.get("GITHUB_TOKEN")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     repository = os.environ.get("GITHUB_REPOSITORY")
 
     if not token:
         raise RuntimeError(
-            "GITHUB_TOKEN "
+            "GITHUB_TOKEN or GH_TOKEN "
             "environment variable is not set"
         )
 
@@ -49,7 +52,7 @@ def comment(pr_number: str, body: str) -> None:
                     f"GitHub API returned HTTP {response.status}"
                 )
 
-            print("✅ AI review successfully published to GitHub PR")
+            logger.info("✅ AI review successfully published to GitHub PR")
 
 
     except urllib.error.HTTPError as exc:
