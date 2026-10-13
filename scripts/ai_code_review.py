@@ -361,7 +361,7 @@ logger = logging.getLogger(__name__)
 
 def read_text_file(file_path: str) -> str:
     """
-    Read a text file, trying UTF-8 first then falling back to Latin-1.
+    Read a UTF-8 text file.
     """
     path = Path(file_path)
 
@@ -370,10 +370,7 @@ def read_text_file(file_path: str) -> str:
             f"File not found: {file_path}"
         )
 
-    try:
-        content = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        content = path.read_text(encoding="latin-1")
+    content = path.read_text(encoding="utf-8")
 
     if not content.strip():
         raise ValueError(
@@ -416,190 +413,6 @@ def build_payload(
         "diff": diff,
         "repository_context": args.repository_context or "",
     }
-
-
-# def validate_api_url(api_url: str) -> str:
-#     """
-#     Validate and normalize the AI review API URL.
-
-#     The URL must point to the actual FastAPI POST review endpoint.
-
-#     Example:
-#         http://192.168.1.100:8000/api/code-review
-
-#     Invalid example:
-#         http://192.168.1.100:8000
-#     """
-#     if not api_url or not api_url.strip():
-#         raise ValueError(
-#             "API URL is not configured. "
-#             "Pass --api-url or set API_URL."
-#         )
-
-#     normalized_url = api_url.strip().rstrip("/")
-
-#     parsed_url = urlparse(normalized_url)
-
-#     if parsed_url.scheme not in {"http", "https"}:
-#         raise ValueError(
-#             "API URL must start with http:// or https://. "
-#             f"Received: {normalized_url}"
-#         )
-
-#     if not parsed_url.netloc:
-#         raise ValueError(
-#             f"Invalid API URL: {normalized_url}"
-#         )
-
-#     # Prevent accidentally posting to the backend root.
-#     if parsed_url.path in {"", "/"}:
-#         raise ValueError(
-#             "API_URL points to the backend root. "
-#             "Configure the complete AI review POST endpoint. "
-#             "For example: "
-#             "http://backend-host:8000/api/code-review. "
-#             f"Current value: {normalized_url}"
-#         )
-
-#     if parsed_url.path.endswith("/docs"):
-#         raise ValueError(
-#             "API_URL points to Swagger documentation. "
-#             "Use the actual POST review endpoint instead."
-#         )
-
-#     if parsed_url.path.endswith("/openapi.json"):
-#         raise ValueError(
-#             "API_URL points to the OpenAPI schema. "
-#             "Use the actual POST review endpoint instead."
-#         )
-
-#     return normalized_url
-
-
-# def call_review_backend(
-#     api_url: str,
-#     payload: dict[str, Any],
-# ) -> dict[str, Any]:
-#     """
-#     Call the AI code review API.
-
-#     api_url must be the complete POST endpoint.
-
-#     Do not pass:
-#         http://localhost:8000
-
-#     Do not pass:
-#         /api/ephemeral-runner/{instance_id}/complete
-#     """
-#     api_url = validate_api_url(api_url)
-
-#     logger.info("Sending review request to backend")
-#     logger.info("Review API URL: %s", api_url)
-
-#     try:
-#         response = requests.post(
-#             api_url,
-#             json=payload,
-#             timeout=900,
-#         )
-
-#         logger.info(
-#             "Backend response status: %s",
-#             response.status_code,
-#         )
-
-#         if response.status_code == 405:
-#             response_text = response.text[:2000]
-
-#             raise RuntimeError(
-#                 "Backend returned HTTP 405 Method Not Allowed. "
-#                 "The configured API_URL does not support POST. "
-#                 "Check that it points to the actual AI review endpoint. "
-#                 f"URL: {api_url}. "
-#                 f"Response: {response_text}"
-#             )
-
-#         if response.status_code == 404:
-#             response_text = response.text[:2000]
-
-#             raise RuntimeError(
-#                 "Backend returned HTTP 404 Not Found. "
-#                 "Check the FastAPI review route. "
-#                 f"URL: {api_url}. "
-#                 f"Response: {response_text}"
-#             )
-
-#         response.raise_for_status()
-
-#     except requests.exceptions.Timeout as exc:
-#         logger.exception(
-#             "Review backend request timed out"
-#         )
-
-#         raise RuntimeError(
-#             "Review backend request timed out after 900 seconds"
-#         ) from exc
-
-#     except requests.exceptions.ConnectionError as exc:
-#         logger.exception(
-#             "Could not connect to review backend"
-#         )
-
-#         raise RuntimeError(
-#             f"Could not connect to review backend: {api_url}"
-#         ) from exc
-
-#     except requests.exceptions.HTTPError as exc:
-#         response_text = ""
-
-#         if exc.response is not None:
-#             response_text = exc.response.text[:2000]
-
-#         status_code = (
-#             exc.response.status_code
-#             if exc.response is not None
-#             else "unknown"
-#         )
-
-#         logger.error(
-#             "Review backend returned HTTP error: %s",
-#             response_text,
-#         )
-
-#         raise RuntimeError(
-#             f"Review backend HTTP error: {status_code}. "
-#             f"Response: {response_text}"
-#         ) from exc
-
-#     except requests.exceptions.RequestException as exc:
-#         logger.exception(
-#             "Review backend request failed"
-#         )
-
-#         raise RuntimeError(
-#             "Review backend request failed"
-#         ) from exc
-
-#     try:
-#         result = response.json()
-
-#     except ValueError as exc:
-#         logger.error(
-#             "Backend returned invalid JSON: %s",
-#             response.text[:2000],
-#         )
-
-#         raise RuntimeError(
-#             "Review backend returned invalid JSON"
-#         ) from exc
-
-#     if not isinstance(result, dict):
-#         raise RuntimeError(
-#             "Review backend response must be a JSON object"
-#         )
-
-#     return result
-
 
 def validate_review_result(
     review: dict[str, Any],
@@ -761,12 +574,7 @@ def main() -> int:
             output_file=args.output_file,
         )
 
-        print(
-            json.dumps(
-                review,
-                indent=2,
-                ensure_ascii=False,
-            )
+        logger.info(json.dumps( review, indent=2, ensure_ascii=False,)
         )
 
         return 0
