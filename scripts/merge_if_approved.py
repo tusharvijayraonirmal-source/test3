@@ -19,11 +19,17 @@ def main():
 
     if review["status"] != "APPROVED":
 
-        logger.info("AI review did not approve PR. " "Merge skipped.")
+        print(
+            "AI review did not approve PR. "
+            "Merge skipped."
+        )
 
         return
 
-    logger.info(f"AI approved PR #{args.pr_number}. " "Attempting merge.")
+    print(
+        f"AI approved PR #{args.pr_number}. "
+        "Attempting merge."
+    )
 
     subprocess.run(
         [
