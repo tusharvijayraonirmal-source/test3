@@ -585,24 +585,14 @@ def main() -> int:
             exc,
         )
 
-        error_result = {
-            "status": "ERROR",
-            "score": 0,
-            "summary": str(exc),
-            "findings": [],
-        }
-
-        try:
-            save_review_result(
-                review=error_result,
-                output_file=args.output_file,
-            )
-
-        except Exception:
-            logger.exception(
-                "Could not save error review result"
-            )
-
+        # Do NOT persist a synthetic review result. A fabricated ERROR row is
+        # indistinguishable from a real review once stored, and it made a
+        # truncated Claude response look like a legitimate finding set.
+        # Exit non-zero so the workflow fails loudly instead of reporting a
+        # successful review with score 0.
+        logger.error(
+            "No review result was saved because the review failed."
+        )
         return 1
 
 
