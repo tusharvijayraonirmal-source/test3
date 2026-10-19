@@ -197,9 +197,13 @@ by the applicable skill instructions.
 
     logger.info(f"Calling Claude model: {MODEL}")
 
+    # Full-codebase reviews embed the whole repository in the prompt, so the
+    # JSON output can be far larger than a PR diff. 8192 truncates mid-object
+    # and produces an unparseable response; 32768 covers a full repo review
+    # with room for many findings.
     response = client.messages.create(
         model=MODEL,
-        max_tokens=8192,
+        max_tokens=32768,
         thinking={
         "type": "disabled"
     },
@@ -210,6 +214,16 @@ by the applicable skill instructions.
             }
         ],
     )
+
+    # A truncated response is the main cause of "Claude response was not valid
+    # JSON." Detect it up front so the failure message names the real problem
+    # instead of surfacing a generic parse error.
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(
+            "Claude response hit the max_tokens limit and was truncated "
+            "before the JSON was complete. Reduce the diff size, split the "
+            "review, or raise max_tokens."
+        )
 
     text_parts = []
 
@@ -226,15 +240,19 @@ by the applicable skill instructions.
             f"{[getattr(b, 'type', type(b).__name__) for b in response.content]}"
         )
 
-    # Remove Markdown JSON fences if Claude returns them
-    if text.startswith("```json"):
-        text = text[len("```json"):].strip()
+    # Strip Markdown JSON fences. Match case-insensitively and allow leading
+    # whitespace — a capitalized ```JSON or a blank line before the fence
+    # previously defeated both checks and left backticks inside the JSON.
+    stripped = text.lstrip()
+    if stripped.lower().startswith("```json"):
+        stripped = stripped[len("```json"):].lstrip()
+    elif stripped.startswith("```"):
+        stripped = stripped[3:].lstrip()
 
-    if text.startswith("```"):
-        text = text[3:].strip()
+    if stripped.endswith("```"):
+        stripped = stripped[:-3]
 
-    if text.endswith("```"):
-        text = text[:-3].strip()
+    text = stripped.strip()
 
     try:
         review = json.loads(text)
