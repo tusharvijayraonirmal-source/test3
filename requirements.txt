@@ -6,4 +6,3 @@ anthropic
 pydantic
 python-dotenv
 json-repair
-openpyxl
