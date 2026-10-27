@@ -1,8 +1,9 @@
 import os
 import json
+import os
+import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import anthropic
 from json_repair import repair_json
@@ -22,8 +23,6 @@ MODEL = (
 
 api_key = (
     os.getenv("ANTHROPIC_AUTH_TOKEN", "").strip()
-    or os.getenv("ANTHROPIC_API_KEY", "").strip()
-    or os.getenv("ANTHROPIC_TOKEN", "").strip()
 )
 
 base_url = (
@@ -54,11 +53,13 @@ if not MODEL:
 
 
 logger.info(
-    "Claude configuration: model=%s base_url=%s",
+    "Claude config: model=%s base_url=%s token_present=%s token_length=%s token_prefix=%s",
     MODEL,
     base_url,
+    bool(api_key),
+    len(api_key),
+    api_key[:10] + "..." if api_key else "NONE",
 )
-
 
 # ============================================================
 # Claude client
@@ -67,7 +68,8 @@ logger.info(
 client = anthropic.Anthropic(
     api_key=api_key,
     base_url=base_url.rstrip("/"),
-)
+) 
+
 
 # # Build client kwargs conditionally to avoid
 # # passing empty values to newer SDK versions.
@@ -85,23 +87,12 @@ client = anthropic.Anthropic(
 def load_skill(skill_name: str) -> str:
     project_root = Path(__file__).resolve().parent.parent
 
-    # Try standard skills dir first
     skill_file = (
         project_root
         / "skills"
         / skill_name
         / "skills.md"
     )
-
-    if not skill_file.exists():
-        # Fall back to custom skills dir
-        skill_file = (
-            project_root
-            / "skills"
-            / "custom"
-            / skill_name
-            / "skills.md"
-        )
 
     if not skill_file.exists():
         raise FileNotFoundError(
@@ -120,7 +111,7 @@ def review_code(
     selected_skills: list[str] | None = None,
     review_mode: str = "PR",
     repository_context: str = "",
-    **kwargs: Any,
+    **kwargs,
 ):
     # Load ONLY the skills selected by the user
     skills_content = []
@@ -195,15 +186,11 @@ Return ONLY the JSON format specified
 by the applicable skill instructions.
 """
 
-    logger.info(f"Calling Claude model: {MODEL}")
+    print(f"Calling Claude model: {MODEL}")
 
-    # Full-codebase reviews embed the whole repository in the prompt, so the
-    # JSON output can be far larger than a PR diff. 8192 truncates mid-object
-    # and produces an unparseable response; 32768 covers a full repo review
-    # with room for many findings.
     response = client.messages.create(
         model=MODEL,
-        max_tokens=32768,
+        max_tokens=8192,
         thinking={
         "type": "disabled"
     },
@@ -214,16 +201,6 @@ by the applicable skill instructions.
             }
         ],
     )
-
-    # A truncated response is the main cause of "Claude response was not valid
-    # JSON." Detect it up front so the failure message names the real problem
-    # instead of surfacing a generic parse error.
-    if getattr(response, "stop_reason", None) == "max_tokens":
-        raise RuntimeError(
-            "Claude response hit the max_tokens limit and was truncated "
-            "before the JSON was complete. Reduce the diff size, split the "
-            "review, or raise max_tokens."
-        )
 
     text_parts = []
 
@@ -240,19 +217,15 @@ by the applicable skill instructions.
             f"{[getattr(b, 'type', type(b).__name__) for b in response.content]}"
         )
 
-    # Strip Markdown JSON fences. Match case-insensitively and allow leading
-    # whitespace — a capitalized ```JSON or a blank line before the fence
-    # previously defeated both checks and left backticks inside the JSON.
-    stripped = text.lstrip()
-    if stripped.lower().startswith("```json"):
-        stripped = stripped[len("```json"):].lstrip()
-    elif stripped.startswith("```"):
-        stripped = stripped[3:].lstrip()
+    # Remove Markdown JSON fences if Claude returns them
+    if text.startswith("```json"):
+        text = text[len("```json"):].strip()
 
-    if stripped.endswith("```"):
-        stripped = stripped[:-3]
+    if text.startswith("```"):
+        text = text[3:].strip()
 
-    text = stripped.strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
 
     try:
         review = json.loads(text)
@@ -265,8 +238,8 @@ by the applicable skill instructions.
             repaired = repair_json(text)
             review = json.loads(repaired)
         except Exception as exc:
-            logger.info("Claude returned invalid JSON:")
-            logger.info(text[:5000])
+            print("Claude returned invalid JSON:")
+            print(text[:5000])
             raise RuntimeError(
                 "Claude response was not valid JSON."
             ) from exc
