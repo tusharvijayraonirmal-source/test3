@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+pytest
+anthropic
+pydantic
+python-dotenv
+json-repair
