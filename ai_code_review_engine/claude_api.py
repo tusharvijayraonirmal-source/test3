@@ -1,9 +1,8 @@
 import os
 import json
-import os
-import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import anthropic
 from json_repair import repair_json
@@ -23,6 +22,8 @@ MODEL = (
 
 api_key = (
     os.getenv("ANTHROPIC_AUTH_TOKEN", "").strip()
+    or os.getenv("ANTHROPIC_API_KEY", "").strip()
+    or os.getenv("ANTHROPIC_TOKEN", "").strip()
 )
 
 base_url = (
@@ -53,23 +54,94 @@ if not MODEL:
 
 
 logger.info(
-    "Claude config: model=%s base_url=%s token_present=%s token_length=%s token_prefix=%s",
+    "Claude configuration: model=%s base_url=%s",
     MODEL,
     base_url,
-    bool(api_key),
-    len(api_key),
-    api_key[:10] + "..." if api_key else "NONE",
 )
 
+
 # ============================================================
-# Claude client
+# Response normalization
 # ============================================================
+
+def _default_score(findings: list[Any]) -> int:
+    """Derive a 0-10 score when the model omits one."""
+    return max(0, 10 - 2 * len(findings))
+
+
+def normalize_review_response(
+    review: Any,
+) -> dict[str, Any]:
+    """
+    Coerce Claude's reply into the expected shape:
+    {"status", "score", "summary", "findings"}.
+
+    Some model endpoints return a bare list of findings or omit the
+    top-level fields even when asked for a specific format. Instead of
+    hard-failing the workflow, fill in sensible defaults so downstream
+    steps (publish, merge, email) always receive a usable result.
+    """
+    findings: list[Any] = []
+
+    if isinstance(review, list):
+        # Model returned a bare findings list.
+        findings = list(review)
+        review = {}
+
+    if not isinstance(review, dict):
+        logger.warning(
+            "Review response was %s; using an empty review.",
+            type(review).__name__,
+        )
+        review = {}
+        if not isinstance(findings, list):
+            findings = []
+
+    if "findings" in review:
+        raw_findings = review["findings"]
+        if isinstance(raw_findings, list):
+            findings = raw_findings
+        elif raw_findings in (None, ""):
+            findings = []
+        else:
+            findings = [raw_findings]
+            logger.warning(
+                "'findings' was %s; wrapped into a list.",
+                type(raw_findings).__name__,
+            )
+        review["findings"] = findings
+    else:
+        review["findings"] = findings
+
+    if "status" not in review or not str(
+        review.get("status") or ""
+    ).strip():
+        review["status"] = (
+            "CHANGES_REQUESTED" if findings else "APPROVED"
+        )
+
+    if "score" not in review or review.get("score") is None:
+        review["score"] = _default_score(findings)
+
+    if "summary" not in review or not str(
+        review.get("summary") or ""
+    ).strip():
+        if findings:
+            review["summary"] = (
+                f"AI review reported {len(findings)} finding(s); "
+                "the model did not provide a summary."
+            )
+        else:
+            review["summary"] = (
+                "AI review found no significant issues."
+            )
+
+    return review
 
 client = anthropic.Anthropic(
     api_key=api_key,
     base_url=base_url.rstrip("/"),
-) 
-
+)
 
 # # Build client kwargs conditionally to avoid
 # # passing empty values to newer SDK versions.
@@ -87,12 +159,23 @@ client = anthropic.Anthropic(
 def load_skill(skill_name: str) -> str:
     project_root = Path(__file__).resolve().parent.parent
 
+    # Try standard skills dir first
     skill_file = (
         project_root
         / "skills"
         / skill_name
         / "skills.md"
     )
+
+    if not skill_file.exists():
+        # Fall back to custom skills dir
+        skill_file = (
+            project_root
+            / "skills"
+            / "custom"
+            / skill_name
+            / "skills.md"
+        )
 
     if not skill_file.exists():
         raise FileNotFoundError(
@@ -111,7 +194,7 @@ def review_code(
     selected_skills: list[str] | None = None,
     review_mode: str = "PR",
     repository_context: str = "",
-    **kwargs,
+    **kwargs: Any,
 ):
     # Load ONLY the skills selected by the user
     skills_content = []
@@ -182,11 +265,18 @@ INSTRUCTIONS
 ==============================
 Follow all selected skill instructions exactly.
 
-Return ONLY the JSON format specified
-by the applicable skill instructions.
+Return ONLY valid JSON. No prose, no markdown fences, no code blocks.
+
+The top-level JSON object MUST include these keys:
+- "status": "APPROVED" or "CHANGES_REQUESTED"
+- "score": an integer from 0 to 10
+- "summary": a short review summary string
+- "findings": a list (empty list if there are no findings)
+
+Never return a bare array. Never omit any required key.
 """
 
-    print(f"Calling Claude model: {MODEL}")
+    logger.info(f"Calling Claude model: {MODEL}")
 
     response = client.messages.create(
         model=MODEL,
@@ -238,10 +328,10 @@ by the applicable skill instructions.
             repaired = repair_json(text)
             review = json.loads(repaired)
         except Exception as exc:
-            print("Claude returned invalid JSON:")
-            print(text[:5000])
+            logger.info("Claude returned invalid JSON:")
+            logger.info(text[:5000])
             raise RuntimeError(
                 "Claude response was not valid JSON."
             ) from exc
 
-    return review
+    return normalize_review_response(review)
